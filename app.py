@@ -1,320 +1,112 @@
-# import streamlit as st
-# import validators
-# from urllib.parse import urlparse, parse_qs
-
-# from youtube_transcript_api import YouTubeTranscriptApi
-
-# from langchain_core.documents import Document
-# from langchain_core.prompts import PromptTemplate
-# from langchain_groq import ChatGroq
-# from langchain.chains.summarize import load_summarize_chain
-# from langchain_community.document_loaders import UnstructuredURLLoader
-
-
-# # -------------------- Streamlit UI -------------------- #
-
-# st.set_page_config(
-#     page_title="LangChain: Summarize Text From YT or Website",
-#     page_icon="🦜"
-# )
-
-# st.title("🦜 LangChain: Summarize Text From YT or Website")
-# st.subheader("Summarize URL")
-
-# with st.sidebar:
-#     groq_api_key = st.text_input(
-#         "Groq API Key",
-#         type="password"
-#     )
-
-# generic_url = st.text_input(
-#     "URL",
-#     label_visibility="collapsed"
-# )
-
-# # -------------------- Prompt -------------------- #
-
-# prompt = PromptTemplate.from_template(
-#     """
-# Provide a concise summary of the following content in approximately 300 words.
-
-# Content:
-# {text}
-# """
-# )
-
-# # -------------------- Helper Functions -------------------- #
-
-
-# def extract_video_id(url: str):
-#     """Extract YouTube video id."""
-
-#     parsed = urlparse(url)
-
-#     if parsed.hostname == "youtu.be":
-#         return parsed.path.lstrip("/")
-
-#     if parsed.hostname and "youtube.com" in parsed.hostname:
-#         return parse_qs(parsed.query).get("v", [None])[0]
-
-#     return None
-
-
-# def load_youtube(url: str):
-#     """Load YouTube transcript using youtube-transcript-api 1.2.4"""
-
-#     video_id = extract_video_id(url)
-
-#     if not video_id:
-#         raise ValueError("Invalid YouTube URL")
-
-#     api = YouTubeTranscriptApi()
-
-#     transcript = api.fetch(video_id)
-
-#     transcript_text = " ".join(
-#         snippet.text
-#         for snippet in transcript
-#     )
-
-#     return [
-#         Document(
-#             page_content=transcript_text,
-#             metadata={"source": url}
-#         )
-#     ]
-
-
-# def load_website(url: str):
-#     """Load website content."""
-
-#     loader = UnstructuredURLLoader(
-#         urls=[url],
-#         ssl_verify=False,
-#         headers={
-#             "User-Agent":
-#             "Mozilla/5.0"
-#         }
-#     )
-
-#     return loader.load()
-
-
-# # -------------------- Main -------------------- #
-
-# if st.button("Summarize the Content from YT or Website"):
-
-#     if not groq_api_key.strip():
-#         st.error("Please enter your Groq API Key.")
-#         st.stop()
-
-#     if not generic_url.strip():
-#         st.error("Please enter a URL.")
-#         st.stop()
-
-#     if not validators.url(generic_url):
-#         st.error("Please enter a valid URL.")
-#         st.stop()
-
-#     try:
-
-#         with st.spinner("Loading content..."):
-
-#             if (
-#                 "youtube.com" in generic_url
-#                 or "youtu.be" in generic_url
-#             ):
-#                 docs = load_youtube(generic_url)
-#             else:
-#                 docs = load_website(generic_url)
-
-#         if not docs:
-#             st.error("No content found.")
-#             st.stop()
-
-#         llm = ChatGroq(
-#             groq_api_key=groq_api_key,
-#             model="llama-3.3-70b-versatile",
-#         )
-
-#         chain = load_summarize_chain(
-#             llm=llm,
-#             chain_type="stuff",
-#             prompt=prompt,
-#         )
-
-#         with st.spinner("Generating summary..."):
-
-#             result = chain.invoke(
-#                 {"input_documents": docs}
-#             )
-
-#         if isinstance(result, dict):
-#             summary = (
-#                 result.get("output_text")
-#                 or result.get("text")
-#                 or str(result)
-#             )
-#         else:
-#             summary = result
-
-#         st.success(summary)
-
-#     except Exception as e:
-#         st.exception(e)
-
 import streamlit as st
 import validators
 from urllib.parse import urlparse, parse_qs
-
+import tempfile
+import requests
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import RequestBlocked
 
 from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
-from langchain.chains.summarize import load_summarize_chain
-from langchain_community.document_loaders import UnstructuredURLLoader
 
-# -------------------- PAGE CONFIG -------------------- #
-
-st.set_page_config(
-    page_title="AI Text Summarizer",
-    page_icon="🦜",
-    layout="wide",
-    initial_sidebar_state="expanded"
+from langchain_community.document_loaders import (
+    UnstructuredURLLoader,
+    PyMuPDFLoader,
 )
 
-# -------------------- CUSTOM CSS -------------------- #
+# ---------------- PAGE CONFIG ---------------- #
+
+st.set_page_config(
+    page_title="AI Universal Summarizer",
+    page_icon="🦜",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ---------------- CUSTOM CSS ---------------- #
 
 st.markdown("""
 <style>
-
-.main{
-    padding-top:1rem;
-}
 
 .block-container{
     padding-top:2rem;
 }
 
-h1,h2,h3{
-    color:white;
-}
-            
 .hero{
+background:linear-gradient(135deg,#D8F3DC,#B7EFC5,#95D5B2);
 padding:35px;
-border-radius:18px;
+border-radius:20px;
 text-align:center;
 margin-bottom:25px;
-box-shadow:0px 8px 20px rgba(0,0,0,.15);
+box-shadow:0px 10px 25px rgba(0,0,0,.15);
 }
 
 .hero h1{
-color:black;
+color:#1B4332;
 font-size:42px;
-margin-bottom:10px;
 }
 
 .hero p{
-color:black;
+color:#2D6A4F;
 font-size:18px;
-}
-
-.stTextInput>div>div>input{
-border-radius:12px;
-padding:12px;
 }
 
 .stButton>button{
 width:100%;
 height:55px;
+border-radius:12px;
+background:#2D6A4F;
+color:white;
 font-size:18px;
 font-weight:bold;
-border-radius:12px;
-background:#43A047;
-color:white;
-border:none;
 }
 
 .stButton>button:hover{
-background:#2E7D32;
+background:#1B4332;
 color:white;
 }
 
 .summary-card{
-
-background:#F1FFF3;
-
+background:#F4FFF6;
 padding:25px;
-
+border-left:8px solid #2D6A4F;
 border-radius:15px;
-
-border-left:8px solid #43A047;
-
-box-shadow:0px 6px 15px rgba(0,0,0,.12);
-
-color:#1B5E20;
-
-font-size:17px;
-
-line-height:1.8;
-
-}
-.metric-card{
-
-background:#E8F5E9;
-
-padding:18px;
-
-border-radius:12px;
-
-text-align:center;
-
+color:#1B4332;
+box-shadow:0px 6px 16px rgba(0,0,0,.15);
 }
 
-.footer{
-text-align:center;
-color:gray;
-padding-top:30px;
-}
-
-.stTextInput>div>div>input{
-
-border:2px solid #81C784;
-
-border-radius:12px;
-
-}
 .stProgress > div > div > div > div{
-
-background:#43A047;
-
+background:#2D6A4F;
 }
 
+section[data-testid="stSidebar"]{
+background:#F8FFF8;
+}
 
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------- HERO -------------------- #
+# ---------------- HEADER ---------------- #
 
 st.markdown("""
-<div class='hero'>
+<div class="hero">
 
-<h1>🦜 AI Text Summarizer</h1>
+<h1>🦜 AI Universal Summarizer</h1>
 
 <p>
-Summarize YouTube Videos & Website Articles using
-<b>LangChain + Groq Llama 3.3 70B</b>
+Summarize Websites • YouTube • arXiv Papers • PDF Documents
+using <b>LangChain + Groq</b>
 </p>
 
 </div>
 """, unsafe_allow_html=True)
 
-# -------------------- SIDEBAR -------------------- #
+# ---------------- SIDEBAR ---------------- #
 
 with st.sidebar:
 
-    st.title("⚙ Settings")
+    st.header("⚙ Settings")
 
     groq_api_key = st.text_input(
         "Groq API Key",
@@ -323,76 +115,68 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("### 🤖 Model")
+    st.success("Model")
 
-    st.success("llama-3.3-70b-versatile")
+    st.code("llama-3.3-70b-versatile")
 
     st.divider()
 
-    st.markdown("### 📌 Supported URLs")
+    st.markdown("### Supported Sources")
 
     st.markdown("""
-- 🎥 YouTube Videos
+✅ Website URLs
 
-- 🌍 Website Articles
+✅ YouTube Videos
 
-- 📰 Blogs
+✅ arXiv Papers
 
-- 📚 Documentation
-
-- 📄 News Articles
+✅ PDF URLs
 """)
 
-    st.divider()
-
     st.info(
-        "Paste a URL and click **Generate Summary**."
+        "Paste any supported URL and click Generate Summary."
     )
 
-# -------------------- URL INPUT -------------------- #
+# ---------------- URL ---------------- #
 
 generic_url = st.text_input(
-    "🔗 Enter Website or YouTube URL"
+    "🔗 Enter URL"
 )
 
 if generic_url:
 
     if "youtube.com" in generic_url or "youtu.be" in generic_url:
+        st.success("🎥 YouTube Video")
 
-        st.success("🎥 YouTube Video Detected")
+    elif "arxiv.org" in generic_url:
+        st.success("📚 arXiv Paper")
+
+    elif generic_url.lower().endswith(".pdf"):
+        st.success("📄 PDF Document")
 
     else:
+        st.success("🌍 Website")
 
-        st.success("🌍 Website Detected")
+# ---------------- HELPER FUNCTIONS ---------------- #
 
-# -------------------- PROMPT -------------------- #
-
-prompt = PromptTemplate.from_template(
-"""
-Provide a detailed summary in approximately 300 words.
-
-Content:
-
-{text}
-"""
-)
-
-# -------------------- HELPERS -------------------- #
-
-def extract_video_id(url):
+def extract_video_id(url: str):
+    """Extract YouTube Video ID"""
 
     parsed = urlparse(url)
 
     if parsed.hostname == "youtu.be":
-        return parsed.path[1:]
+        return parsed.path.lstrip("/")
 
     if parsed.hostname and "youtube.com" in parsed.hostname:
-        return parse_qs(parsed.query).get("v",[None])[0]
+        return parse_qs(parsed.query).get("v", [None])[0]
 
     return None
 
 
-def load_youtube(url):
+# -------------------------------------------------- #
+
+def load_youtube(url: str):
+    """Load transcript from YouTube"""
 
     video_id = extract_video_id(url)
 
@@ -411,168 +195,222 @@ def load_youtube(url):
     return [
         Document(
             page_content=transcript_text,
-            metadata={"source":url}
+            metadata={
+                "source": url,
+                "type": "YouTube"
+            }
         )
     ]
 
 
-def load_website(url):
+# -------------------------------------------------- #
+
+def load_website(url: str):
+    """Load Website"""
 
     loader = UnstructuredURLLoader(
         urls=[url],
         ssl_verify=False,
         headers={
-            "User-Agent":"Mozilla/5.0"
+            "User-Agent":
+            "Mozilla/5.0"
         }
     )
 
-    return loader.load()
+    docs = loader.load()
 
-# -------------------- MAIN -------------------- #
+    if len(docs) == 0:
+        raise ValueError("Unable to extract website content.")
+
+    return docs
+
+
+# -------------------------------------------------- #
+
+def load_pdf(url: str):
+    """Load PDF URL"""
+
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        raise Exception("Unable to download PDF.")
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".pdf",
+        delete=False
+    ) as f:
+
+        f.write(response.content)
+
+        pdf_path = f.name
+
+    loader = PyMuPDFLoader(pdf_path)
+
+    docs = loader.load()
+
+    return docs
+
+
+# -------------------------------------------------- #
+
+def load_arxiv(url: str):
+    """
+    Convert
+    https://arxiv.org/abs/2506.11020
+    →
+    https://arxiv.org/pdf/2506.11020.pdf
+    """
+
+    paper_id = url.split("/")[-1]
+
+    pdf_url = f"https://arxiv.org/pdf/{paper_id}.pdf"
+
+    return load_pdf(pdf_url)
+
+
+# -------------------------------------------------- #
+
+def detect_source(url: str):
+    """Detect URL Type"""
+
+    if "youtube.com" in url or "youtu.be" in url:
+        return "youtube"
+
+    elif "arxiv.org" in url:
+        return "arxiv"
+
+    elif url.lower().endswith(".pdf"):
+        return "pdf"
+
+    else:
+        return "website"
+
+
+# -------------------------------------------------- #
+
+def load_documents(url: str):
+    """Automatically load the correct source."""
+
+    source = detect_source(url)
+
+    if source == "youtube":
+        docs = load_youtube(url)
+        source_name = "🎥 YouTube Video"
+
+    elif source == "arxiv":
+        docs = load_arxiv(url)
+        source_name = "📚 arXiv Paper"
+
+    elif source == "pdf":
+        docs = load_pdf(url)
+        source_name = "📄 PDF Document"
+
+    else:
+        docs = load_website(url)
+        source_name = "🌍 Website"
+
+    return docs, source_name
+
+
+# ---------------- MAIN ---------------- #
 
 if st.button("🚀 Generate Summary", use_container_width=True):
 
-    # ---------------- Validation ---------------- #
+    # ---------- Validation ---------- #
 
     if not groq_api_key.strip():
         st.warning("⚠ Please enter your Groq API Key.")
         st.stop()
 
     if not generic_url.strip():
-        st.warning("⚠ Please enter a valid URL.")
+        st.warning("⚠ Please enter a URL.")
         st.stop()
 
     if not validators.url(generic_url):
         st.error("❌ Invalid URL.")
         st.stop()
 
+    # ✅ Progress bar created AFTER validation
+    progress = st.progress(0, text="🚀 Initializing...")
+
     try:
 
-        progress = st.progress(0, text="🚀 Initializing...")
+        progress.progress(10, text="🔍 Detecting source...")
 
-        progress.progress(10, text="🔍 Detecting URL type...")
+        docs, source_type = load_documents(generic_url)
 
-        # ---------- Load Documents ---------- #
-
-        if (
-            "youtube.com" in generic_url
-            or "youtu.be" in generic_url
-        ):
-
-            progress.progress(30, text="🎥 Fetching YouTube transcript...")
-
-            docs = load_youtube(generic_url)
-
-            source_type = "YouTube Video"
-
-        else:
-
-            progress.progress(30, text="🌍 Reading Website...")
-
-            docs = load_website(generic_url)
-
-            source_type = "Website"
+        progress.progress(40, text=f"📚 Loading {source_type}...")
 
         if not docs:
-
             st.error("No content found.")
             st.stop()
 
-        progress.progress(55, text="🤖 Loading Llama 3.3 70B...")
-
-        # ---------- LLM ---------- #
+        progress.progress(60, text="🤖 Loading Groq Model...")
 
         llm = ChatGroq(
             groq_api_key=groq_api_key,
-            model="llama-3.3-70b-versatile",
+            model="llama-3.3-70b-versatile"
         )
 
-        chain = load_summarize_chain(
-            llm=llm,
-            chain_type="stuff",
-            prompt=prompt,
-        )
+        progress.progress(80, text="🧠 Generating Summary...")
 
-        progress.progress(80, text="📝 Generating Summary...")
+        # Combine all doc content, truncate to avoid token limits
+        full_text = " ".join([doc.page_content for doc in docs])
+        full_text = full_text[:12000]  # Safe limit for Groq
 
-        result = chain.invoke(
-            {
-                "input_documents": docs
-            }
-        )
+        final_prompt = f"""
+Provide a concise summary in approximately 300 words.
 
-        progress.progress(100, text="✅ Completed")
+Content:
 
-        # ---------- Output ---------- #
+{full_text}
+"""
 
-        if isinstance(result, dict):
+        response = llm.invoke(final_prompt)
+        summary = response.content
 
-            summary = (
-                result.get("output_text")
-                or result.get("text")
-                or str(result)
-            )
+        progress.progress(100, text="✅ Completed!")
 
-        else:
+        # ---------------- RESULT ---------------- #
 
-            summary = result
-
-        st.toast("🎉 Summary Generated Successfully!")
-
+        st.toast("🎉 Summary Generated!")
         st.balloons()
 
-        st.divider()
+        # ---------------- SUMMARY ---------------- #
 
+        st.divider()
         st.markdown("## 📄 AI Generated Summary")
-
         st.markdown(
-            f"""
-<div class="summary-card">
-
-{summary}
-
-</div>
-""",
-            unsafe_allow_html=True,
+            f'<div class="summary-card">{summary}</div>',
+            unsafe_allow_html=True
         )
-
         st.divider()
 
-        # ---------- Metrics ---------- #
+        # ---------------- STATISTICS ---------------- #
 
         st.markdown("## 📊 Summary Statistics")
 
-        c1, c2, c3 = st.columns(3)
+        col1, col2, col3 = st.columns(3)
 
-        c1.metric(
-            "📝 Words",
-            len(summary.split())
-        )
+        with col1:
+            st.metric("📝 Words", len(summary.split()))
 
-        c2.metric(
-            "🔤 Characters",
-            len(summary)
-        )
+        with col2:
+            st.metric("🔤 Characters", len(summary))
 
-        c3.metric(
-            "📄 Documents",
-            len(docs)
-        )
+        with col3:
+            st.metric("📄 Documents", len(docs))
 
         st.divider()
 
-        # ---------- Source Info ---------- #
+        # ---------------- SOURCE INFO ---------------- #
 
         with st.expander("📚 Source Information"):
 
-            st.write("### Source Details")
+            st.markdown(f"### {source_type}")
 
-            st.write("**Source Type:**", source_type)
-
-            st.write(
-                "**URL:**",
-                generic_url
-            )
+            st.write("**URL:**")
+            st.code(generic_url)
 
             st.write(
                 "**Characters Extracted:**",
@@ -584,45 +422,52 @@ if st.button("🚀 Generate Summary", use_container_width=True):
                 len(docs[0].page_content.split())
             )
 
+            st.markdown("### Preview")
+
             st.text_area(
-                "Preview",
-                docs[0].page_content[:1200],
-                height=220
+                "",
+                docs[0].page_content[:1500],
+                height=250
             )
 
         st.divider()
 
-        # ---------- Download ---------- #
+        # ---------------- DOWNLOAD ---------------- #
 
         st.download_button(
-
             label="📥 Download Summary",
-
             data=summary,
-
             file_name="summary.txt",
-
             mime="text/plain",
-
             use_container_width=True
-
         )
 
         st.divider()
 
+        # ---------------- FOOTER ---------------- #
+
         st.markdown(
             """
-<div class='footer'>
+<div style="text-align:center;
+padding:25px;
+color:#2D6A4F;
+font-size:16px;">
 
-Made with ❤️ using Streamlit | LangChain | Groq
+Made with ❤️ using
+<b>Streamlit</b> •
+<b>LangChain</b> •
+<b>Groq</b>
 
 </div>
 """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
 
+    except RequestBlocked:
+        st.error("❌ YouTube blocked transcript access. Try a different video.")
+
+    except ValueError as e:
+        st.error(str(e))
+
     except Exception as e:
-
-        st.error("❌ Something went wrong.")
-
         st.exception(e)
